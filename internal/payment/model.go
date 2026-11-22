@@ -17,6 +17,9 @@ const CurrencyINR = "INR"
 
 const maxIdempotencyKeyLen = 255
 
+// MaxAmountPaise (10 billion rupees) keeps fee arithmetic comfortably inside int64.
+const MaxAmountPaise int64 = 1_000_000_000_000
+
 type Status string
 
 const (
@@ -38,6 +41,7 @@ type Payment struct {
 	Currency      string     `json:"currency"`
 	Status        Status     `json:"status"`
 	FailureReason *string    `json:"failure_reason,omitempty"`
+	FeePaise      int64      `json:"fee_paise"`
 	RefundedPaise int64      `json:"refunded_paise"`
 	CapturedAt    *time.Time `json:"captured_at,omitempty"`
 	Version       int        `json:"-"`
@@ -86,6 +90,8 @@ func (in CreateInput) Validate() error {
 		return &ValidationError{"customer_id is required"}
 	case in.AmountPaise <= 0:
 		return &ValidationError{"amount_paise must be greater than zero"}
+	case in.AmountPaise > MaxAmountPaise:
+		return &ValidationError{"amount_paise exceeds the maximum allowed"}
 	case in.Currency != CurrencyINR:
 		return &ValidationError{"only INR is supported"}
 	}

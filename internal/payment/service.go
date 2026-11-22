@@ -16,19 +16,21 @@ import (
 type Service struct {
 	pool *pgxpool.Pool
 	proc processor.Processor
+	// defaultFeeBPS applies to merchants without their own fee (200 = 2%).
+	defaultFeeBPS int
 }
 
-func NewService(pool *pgxpool.Pool, proc processor.Processor) *Service {
-	return &Service{pool: pool, proc: proc}
+func NewService(pool *pgxpool.Pool, proc processor.Processor, defaultFeeBPS int) *Service {
+	return &Service{pool: pool, proc: proc, defaultFeeBPS: defaultFeeBPS}
 }
 
 const paymentCols = `id, merchant_id, customer_id, amount_paise, currency, status,
-	failure_reason, refunded_paise, captured_at, version, created_at, updated_at`
+	failure_reason, fee_paise, refunded_paise, captured_at, version, created_at, updated_at`
 
 func scanPayment(row pgx.Row) (Payment, error) {
 	var p Payment
 	err := row.Scan(&p.ID, &p.MerchantID, &p.CustomerID, &p.AmountPaise, &p.Currency,
-		&p.Status, &p.FailureReason, &p.RefundedPaise, &p.CapturedAt, &p.Version,
+		&p.Status, &p.FailureReason, &p.FeePaise, &p.RefundedPaise, &p.CapturedAt, &p.Version,
 		&p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }

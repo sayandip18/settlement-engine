@@ -18,7 +18,7 @@ import (
 
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	svc := payment.NewService(testutil.NewPool(t), processor.NewMock())
+	svc := payment.NewService(testutil.NewPool(t), processor.NewMock(), 200)
 	r := chi.NewRouter()
 	payment.NewHandler(svc, slog.New(slog.NewTextHandler(io.Discard, nil))).Routes(r)
 	srv := httptest.NewServer(r)

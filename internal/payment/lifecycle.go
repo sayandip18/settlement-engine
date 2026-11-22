@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/sayandip18/settlement-engine/internal/ledger"
+	"github.com/sayandip18/settlement-engine/internal/merchant"
 	"github.com/sayandip18/settlement-engine/internal/processor"
 )
 
@@ -82,10 +84,10 @@ func save(ctx context.Context, tx pgx.Tx, p *Payment) error {
 	err := tx.QueryRow(ctx,
 		`UPDATE payments
 		    SET status = $2, failure_reason = $3, refunded_paise = $4,
-		        captured_at = $5, version = version + 1, updated_at = now()
-		  WHERE id = $1 AND version = $6
+		        captured_at = $5, fee_paise = $6, version = version + 1, updated_at = now()
+		  WHERE id = $1 AND version = $7
 		  RETURNING version, updated_at`,
-		p.ID, p.Status, p.FailureReason, p.RefundedPaise, p.CapturedAt, p.Version,
+		p.ID, p.Status, p.FailureReason, p.RefundedPaise, p.CapturedAt, p.FeePaise, p.Version,
 	).Scan(&p.Version, &p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("save payment: %w", err)
@@ -100,6 +102,9 @@ type step struct {
 	// failOnDecline moves the payment to FAILED on a permanent decline.
 	// Otherwise a decline leaves the payment untouched.
 	failOnDecline bool
+	// onSuccess runs in the same database transaction after the processor
+	// succeeded and before the payment is saved; an error rolls everything back.
+	onSuccess func(ctx context.Context, tx pgx.Tx, p *Payment) error
 }
 
 func (s *Service) advance(ctx context.Context, id uuid.UUID, st step) (Payment, error) {
@@ -141,24 +146,39 @@ func (s *Service) advance(ctx context.Context, id uuid.UUID, st step) (Payment, 
 			now := time.Now().UTC()
 			p.CapturedAt = &now
 		}
+		if st.onSuccess != nil {
+			if err := st.onSuccess(ctx, tx, p); err != nil {
+				return err
+			}
+		}
 		return save(ctx, tx, p)
 	})
+}
+
+// postCapture freezes the fee onto the payment and records the money collected.
+func (s *Service) postCapture(ctx context.Context, tx pgx.Tx, p *Payment) error {
+	bps, err := merchant.FeeBPS(ctx, tx, p.MerchantID, s.defaultFeeBPS)
+	if err != nil {
+		return fmt.Errorf("load merchant fee: %w", err)
+	}
+	p.FeePaise = calcFee(p.AmountPaise, bps)
+	return ledger.Post(ctx, tx, ledger.Capture(p.ID, p.MerchantID, p.AmountPaise, p.FeePaise))
 }
 
 // Authorize places a hold on the customer's funds (PENDING -> AUTHORIZED).
 // A permanent decline moves the payment to FAILED.
 func (s *Service) Authorize(ctx context.Context, id uuid.UUID) (Payment, error) {
-	return s.advance(ctx, id, step{"authorize", StatusAuthorized, s.proc.Authorize, true})
+	return s.advance(ctx, id, step{action: "authorize", target: StatusAuthorized, call: s.proc.Authorize, failOnDecline: true})
 }
 
 // Capture collects the held funds (AUTHORIZED -> CAPTURED).
 func (s *Service) Capture(ctx context.Context, id uuid.UUID) (Payment, error) {
-	return s.advance(ctx, id, step{"capture", StatusCaptured, s.proc.Capture, true})
+	return s.advance(ctx, id, step{action: "capture", target: StatusCaptured, call: s.proc.Capture, failOnDecline: true, onSuccess: s.postCapture})
 }
 
 // Void releases a hold that was never captured (AUTHORIZED -> VOIDED).
 func (s *Service) Void(ctx context.Context, id uuid.UUID) (Payment, error) {
-	return s.advance(ctx, id, step{"void", StatusVoided, s.proc.Void, false})
+	return s.advance(ctx, id, step{action: "void", target: StatusVoided, call: s.proc.Void})
 }
 
 // Refund is a successful refund of part or all of a captured payment.
@@ -250,6 +270,14 @@ func (s *Service) Refund(ctx context.Context, in RefundInput) (RefundResult, err
 			refund.ID, p.ID, in.IdempotencyKey, in.AmountPaise, amount,
 		).Scan(&refund.CreatedAt); err != nil {
 			return fmt.Errorf("insert refund: %w", err)
+		}
+
+		// Give back the fee proportionally; the rest comes out of the merchant's payable.
+		feeShare := feeRefundedAfter(p.FeePaise, p.AmountPaise, p.RefundedPaise+amount) -
+			feeRefundedAfter(p.FeePaise, p.AmountPaise, p.RefundedPaise)
+		if err := ledger.Post(ctx, tx,
+			ledger.Refund(p.ID, p.MerchantID, refund.ID.String(), amount, feeShare)); err != nil {
+			return err
 		}
 
 		p.RefundedPaise += amount

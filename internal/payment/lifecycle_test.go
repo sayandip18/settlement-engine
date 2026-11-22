@@ -47,7 +47,7 @@ func setup(t *testing.T) env {
 	t.Helper()
 	pool := testutil.NewPool(t)
 	proc := &countingProc{}
-	return env{svc: payment.NewService(pool, proc), proc: proc, pool: pool}
+	return env{svc: payment.NewService(pool, proc, 200), proc: proc, pool: pool}
 }
 
 // newPayment creates a payment (default amount 100000 paise) for the given customer.

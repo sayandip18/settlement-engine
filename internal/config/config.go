@@ -15,7 +15,9 @@ type Config struct {
 	KafkaBrokers []string
 	AdminAPIKey  string
 	AutoMigrate  bool
-	LogLevel     slog.Level
+	// DefaultFeeBPS is the platform fee in basis points for merchants without their own (200 = 2%).
+	DefaultFeeBPS int
+	LogLevel      slog.Level
 }
 
 func Load() (Config, error) {
@@ -34,6 +36,9 @@ func Load() (Config, error) {
 		return c, errors.New("AUTO_MIGRATE must be a boolean")
 	}
 	c.AutoMigrate = auto
+	if c.DefaultFeeBPS, err = strconv.Atoi(env("DEFAULT_FEE_BPS", "200")); err != nil || c.DefaultFeeBPS < 0 || c.DefaultFeeBPS > 10000 {
+		return c, errors.New("DEFAULT_FEE_BPS must be an integer between 0 and 10000")
+	}
 	if err := c.LogLevel.UnmarshalText([]byte(env("LOG_LEVEL", "info"))); err != nil {
 		return c, errors.New("LOG_LEVEL must be debug, info, warn or error")
 	}

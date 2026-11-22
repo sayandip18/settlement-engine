@@ -10,8 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/sayandip18/settlement-engine/internal/config"
 	"github.com/sayandip18/settlement-engine/internal/httpapi"
+	"github.com/sayandip18/settlement-engine/internal/ledger"
+	"github.com/sayandip18/settlement-engine/internal/merchant"
 	"github.com/sayandip18/settlement-engine/internal/payment"
 	"github.com/sayandip18/settlement-engine/internal/platform/db"
 	"github.com/sayandip18/settlement-engine/internal/processor"
@@ -52,8 +56,12 @@ func run() error {
 		"database": func(ctx context.Context) error { return pool.Ping(ctx) },
 		"kafka":    httpapi.TCPCheck(cfg.KafkaBrokers[0]),
 	})
-	payments := payment.NewHandler(payment.NewService(pool, processor.NewMock()), log)
-	router := httpapi.NewRouter(log, health, cfg.AdminAPIKey, payments.Routes, nil)
+	payments := payment.NewHandler(payment.NewService(pool, processor.NewMock(), cfg.DefaultFeeBPS), log)
+	payouts := ledger.NewHandler(pool, log)
+	merchants := merchant.NewHandler(pool, cfg.DefaultFeeBPS, log)
+	router := httpapi.NewRouter(log, health, cfg.AdminAPIKey,
+		func(r chi.Router) { payments.Routes(r); payouts.Routes(r) },
+		merchants.Routes)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
