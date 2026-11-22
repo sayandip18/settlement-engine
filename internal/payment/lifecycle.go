@@ -237,7 +237,7 @@ func (s *Service) Refund(ctx context.Context, in RefundInput) (RefundResult, err
 			return fmt.Errorf("load refund: %w", err)
 		}
 
-		if p.Status != StatusCaptured && p.Status != StatusSettled && p.Status != StatusPartiallyRefunded {
+		if !CanRefund(p.Status) {
 			return &InvalidTransitionError{Action: "refund", From: p.Status}
 		}
 		remaining := p.AmountPaise - p.RefundedPaise

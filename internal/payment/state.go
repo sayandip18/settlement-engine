@@ -22,6 +22,12 @@ func CanTransition(from, to Status) bool {
 	return false
 }
 
+// CanRefund reports whether money can be refunded from a payment in this status:
+// it must have been collected, and not already be fully refunded.
+func CanRefund(s Status) bool {
+	return s == StatusCaptured || s == StatusSettled || s == StatusPartiallyRefunded
+}
+
 // InvalidTransitionError is returned when an action is not allowed in the
 // payment's current status, e.g. refunding a payment that was never captured.
 type InvalidTransitionError struct {

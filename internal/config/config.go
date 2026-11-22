@@ -3,10 +3,12 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -15,6 +17,14 @@ type Config struct {
 	KafkaBrokers []string
 	AdminAPIKey  string
 	AutoMigrate  bool
+	// Async processing.
+	CommandsTopic      string
+	ConsumerGroup      string
+	TopicPartitions    int
+	MaxAttempts        int
+	RetryBaseDelay     time.Duration
+	RetryMaxDelay      time.Duration
+	OutboxPollInterval time.Duration
 	// DefaultFeeBPS is the platform fee in basis points for merchants without their own (200 = 2%).
 	DefaultFeeBPS int
 	LogLevel      slog.Level
@@ -42,13 +52,49 @@ func Load() (Config, error) {
 	if err := c.LogLevel.UnmarshalText([]byte(env("LOG_LEVEL", "info"))); err != nil {
 		return c, errors.New("LOG_LEVEL must be debug, info, warn or error")
 	}
+	c.CommandsTopic = env("COMMANDS_TOPIC", "payments.commands")
+	c.ConsumerGroup = env("CONSUMER_GROUP", "settlement-worker")
+	if c.TopicPartitions, err = positiveInt("TOPIC_PARTITIONS", "3"); err != nil {
+		return c, err
+	}
+	if c.MaxAttempts, err = positiveInt("MAX_ATTEMPTS", "5"); err != nil {
+		return c, err
+	}
+	for _, d := range []struct {
+		dst  *time.Duration
+		name string
+		def  string
+	}{
+		{&c.RetryBaseDelay, "RETRY_BASE_DELAY", "1s"},
+		{&c.RetryMaxDelay, "RETRY_MAX_DELAY", "1m"},
+		{&c.OutboxPollInterval, "OUTBOX_POLL_INTERVAL", "200ms"},
+	} {
+		v, perr := time.ParseDuration(env(d.name, d.def))
+		if perr != nil || v <= 0 {
+			return c, fmt.Errorf("%s must be a positive duration like 500ms or 2s", d.name)
+		}
+		*d.dst = v
+	}
 	if c.DatabaseURL == "" {
 		return c, errors.New("DATABASE_URL is required")
 	}
-	if c.AdminAPIKey == "" {
-		return c, errors.New("ADMIN_API_KEY is required")
-	}
 	return c, nil
+}
+
+// RequireAdminKey is checked by the API process only; the worker has no admin endpoints.
+func (c Config) RequireAdminKey() error {
+	if c.AdminAPIKey == "" {
+		return errors.New("ADMIN_API_KEY is required")
+	}
+	return nil
+}
+
+func positiveInt(name, def string) (int, error) {
+	v, err := strconv.Atoi(env(name, def))
+	if err != nil || v < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return v, nil
 }
 
 func env(key, def string) string {

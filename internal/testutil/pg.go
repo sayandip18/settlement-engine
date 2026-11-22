@@ -39,6 +39,9 @@ func Run(m *testing.M) int {
 	if ctr != nil {
 		_ = ctr.Terminate(context.Background())
 	}
+	if kafkaCtr != nil {
+		_ = kafkaCtr.Terminate(context.Background())
+	}
 	return code
 }
 
@@ -75,7 +78,7 @@ func NewPool(t *testing.T) *pgxpool.Pool {
 		t.Skipf("postgres test container unavailable (is Docker running?): %v", initErr)
 	}
 	if _, err := pool.Exec(context.Background(),
-		`TRUNCATE ledger_entries, ledger_transactions, ledger_accounts, refunds, idempotency_keys, payments, merchants CASCADE`); err != nil {
+		`TRUNCATE outbox, operations, ledger_entries, ledger_transactions, ledger_accounts, refunds, idempotency_keys, payments, merchants CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return pool

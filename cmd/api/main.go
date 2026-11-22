@@ -12,12 +12,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/sayandip18/settlement-engine/internal/command"
 	"github.com/sayandip18/settlement-engine/internal/config"
 	"github.com/sayandip18/settlement-engine/internal/httpapi"
 	"github.com/sayandip18/settlement-engine/internal/ledger"
 	"github.com/sayandip18/settlement-engine/internal/merchant"
 	"github.com/sayandip18/settlement-engine/internal/payment"
 	"github.com/sayandip18/settlement-engine/internal/platform/db"
+	kafkaplat "github.com/sayandip18/settlement-engine/internal/platform/kafka"
 	"github.com/sayandip18/settlement-engine/internal/processor"
 	"github.com/sayandip18/settlement-engine/migrations"
 )
@@ -32,6 +34,9 @@ func main() {
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
+		return err
+	}
+	if err := cfg.RequireAdminKey(); err != nil {
 		return err
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
@@ -54,13 +59,18 @@ func run() error {
 
 	health := httpapi.NewHealth(map[string]httpapi.Check{
 		"database": func(ctx context.Context) error { return pool.Ping(ctx) },
-		"kafka":    httpapi.TCPCheck(cfg.KafkaBrokers[0]),
+		"kafka":    kafkaplat.Check(cfg.KafkaBrokers),
 	})
-	payments := payment.NewHandler(payment.NewService(pool, processor.NewMock(), cfg.DefaultFeeBPS), log)
+	// The API never calls the processor itself: payment actions are queued as
+	// operations and executed by the worker. The service is used here only for
+	// creating and reading payments.
+	paymentSvc := payment.NewService(pool, processor.NewMock(), cfg.DefaultFeeBPS)
+	payments := payment.NewHandler(paymentSvc, log)
+	commands := command.NewHandler(command.NewService(pool, paymentSvc, cfg.CommandsTopic), log)
 	payouts := ledger.NewHandler(pool, log)
 	merchants := merchant.NewHandler(pool, cfg.DefaultFeeBPS, log)
 	router := httpapi.NewRouter(log, health, cfg.AdminAPIKey,
-		func(r chi.Router) { payments.Routes(r); payouts.Routes(r) },
+		func(r chi.Router) { payments.Routes(r); commands.Routes(r); payouts.Routes(r) },
 		merchants.Routes)
 
 	srv := &http.Server{

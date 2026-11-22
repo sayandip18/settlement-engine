@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"time"
 )
@@ -34,17 +33,4 @@ func (h *Health) Ready(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	WriteJSON(w, status, results)
-}
-
-// TCPCheck verifies that a TCP connection to addr can be opened. Used for Kafka
-// until the real client lands in the async-processing phase.
-func TCPCheck(addr string) Check {
-	return func(ctx context.Context) error {
-		var d net.Dialer
-		conn, err := d.DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return err
-		}
-		return conn.Close()
-	}
 }
