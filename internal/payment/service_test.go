@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sayandip18/settlement-engine/internal/payment"
+	"github.com/sayandip18/settlement-engine/internal/processor"
 	"github.com/sayandip18/settlement-engine/internal/testutil"
 )
 
@@ -20,7 +21,7 @@ func input(key string) payment.CreateInput {
 }
 
 func TestCreateAndGet(t *testing.T) {
-	svc := payment.NewService(testutil.NewPool(t))
+	svc := payment.NewService(testutil.NewPool(t), processor.NewMock())
 	ctx := context.Background()
 
 	res, err := svc.Create(ctx, input("k1"))
@@ -45,7 +46,7 @@ func TestCreateAndGet(t *testing.T) {
 }
 
 func TestIdempotentReplay(t *testing.T) {
-	svc := payment.NewService(testutil.NewPool(t))
+	svc := payment.NewService(testutil.NewPool(t), processor.NewMock())
 	ctx := context.Background()
 
 	first, err := svc.Create(ctx, input("k1"))
@@ -62,7 +63,7 @@ func TestIdempotentReplay(t *testing.T) {
 }
 
 func TestIdempotencyKeyReusedWithDifferentBody(t *testing.T) {
-	svc := payment.NewService(testutil.NewPool(t))
+	svc := payment.NewService(testutil.NewPool(t), processor.NewMock())
 	ctx := context.Background()
 
 	if _, err := svc.Create(ctx, input("k1")); err != nil {
@@ -76,7 +77,7 @@ func TestIdempotencyKeyReusedWithDifferentBody(t *testing.T) {
 }
 
 func TestSameKeyDifferentMerchantsAreIndependent(t *testing.T) {
-	svc := payment.NewService(testutil.NewPool(t))
+	svc := payment.NewService(testutil.NewPool(t), processor.NewMock())
 	ctx := context.Background()
 
 	a := input("shared")
@@ -97,7 +98,7 @@ func TestSameKeyDifferentMerchantsAreIndependent(t *testing.T) {
 
 func TestConcurrentSameKeyCreatesOnePayment(t *testing.T) {
 	pool := testutil.NewPool(t)
-	svc := payment.NewService(pool)
+	svc := payment.NewService(pool, processor.NewMock())
 	ctx := context.Background()
 
 	const n = 20
@@ -132,7 +133,7 @@ func TestConcurrentSameKeyCreatesOnePayment(t *testing.T) {
 }
 
 func TestValidation(t *testing.T) {
-	svc := payment.NewService(testutil.NewPool(t))
+	svc := payment.NewService(testutil.NewPool(t), processor.NewMock())
 	cases := map[string]func(*payment.CreateInput){
 		"missing key":      func(in *payment.CreateInput) { in.IdempotencyKey = "" },
 		"missing merchant": func(in *payment.CreateInput) { in.MerchantID = "" },
@@ -155,7 +156,7 @@ func TestValidation(t *testing.T) {
 }
 
 func TestCurrencyDefaultsToINR(t *testing.T) {
-	svc := payment.NewService(testutil.NewPool(t))
+	svc := payment.NewService(testutil.NewPool(t), processor.NewMock())
 	in := input("kd")
 	in.Currency = ""
 	res, err := svc.Create(context.Background(), in)

@@ -31,15 +31,18 @@ const (
 )
 
 type Payment struct {
-	ID            uuid.UUID `json:"id"`
-	MerchantID    string    `json:"merchant_id"`
-	CustomerID    string    `json:"customer_id"`
-	AmountPaise   int64     `json:"amount_paise"`
-	Currency      string    `json:"currency"`
-	Status        Status    `json:"status"`
-	FailureReason *string   `json:"failure_reason,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            uuid.UUID  `json:"id"`
+	MerchantID    string     `json:"merchant_id"`
+	CustomerID    string     `json:"customer_id"`
+	AmountPaise   int64      `json:"amount_paise"`
+	Currency      string     `json:"currency"`
+	Status        Status     `json:"status"`
+	FailureReason *string    `json:"failure_reason,omitempty"`
+	RefundedPaise int64      `json:"refunded_paise"`
+	CapturedAt    *time.Time `json:"captured_at,omitempty"`
+	Version       int        `json:"-"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 var (

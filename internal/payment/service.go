@@ -9,13 +9,29 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/sayandip18/settlement-engine/internal/processor"
 )
 
 type Service struct {
 	pool *pgxpool.Pool
+	proc processor.Processor
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool, proc processor.Processor) *Service {
+	return &Service{pool: pool, proc: proc}
+}
+
+const paymentCols = `id, merchant_id, customer_id, amount_paise, currency, status,
+	failure_reason, refunded_paise, captured_at, version, created_at, updated_at`
+
+func scanPayment(row pgx.Row) (Payment, error) {
+	var p Payment
+	err := row.Scan(&p.ID, &p.MerchantID, &p.CustomerID, &p.AmountPaise, &p.Currency,
+		&p.Status, &p.FailureReason, &p.RefundedPaise, &p.CapturedAt, &p.Version,
+		&p.CreatedAt, &p.UpdatedAt)
+	return p, err
+}
 
 // CreateResult carries the payment plus whether it came from an earlier,
 // identical request (an idempotent replay).
@@ -113,13 +129,8 @@ func replay(ctx context.Context, tx pgx.Tx, in CreateInput, hash string) (Create
 
 // Get returns the payment with its current status.
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (Payment, error) {
-	var p Payment
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, merchant_id, customer_id, amount_paise, currency, status,
-		        failure_reason, created_at, updated_at
-		   FROM payments WHERE id = $1`, id,
-	).Scan(&p.ID, &p.MerchantID, &p.CustomerID, &p.AmountPaise, &p.Currency,
-		&p.Status, &p.FailureReason, &p.CreatedAt, &p.UpdatedAt)
+	p, err := scanPayment(s.pool.QueryRow(ctx,
+		`SELECT `+paymentCols+` FROM payments WHERE id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Payment{}, ErrNotFound
 	}

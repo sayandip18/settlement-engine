@@ -75,7 +75,7 @@ func NewPool(t *testing.T) *pgxpool.Pool {
 		t.Skipf("postgres test container unavailable (is Docker running?): %v", initErr)
 	}
 	if _, err := pool.Exec(context.Background(),
-		`TRUNCATE idempotency_keys, payments CASCADE`); err != nil {
+		`TRUNCATE refunds, idempotency_keys, payments CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return pool

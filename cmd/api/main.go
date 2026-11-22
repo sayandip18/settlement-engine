@@ -14,6 +14,7 @@ import (
 	"github.com/sayandip18/settlement-engine/internal/httpapi"
 	"github.com/sayandip18/settlement-engine/internal/payment"
 	"github.com/sayandip18/settlement-engine/internal/platform/db"
+	"github.com/sayandip18/settlement-engine/internal/processor"
 	"github.com/sayandip18/settlement-engine/migrations"
 )
 
@@ -51,7 +52,7 @@ func run() error {
 		"database": func(ctx context.Context) error { return pool.Ping(ctx) },
 		"kafka":    httpapi.TCPCheck(cfg.KafkaBrokers[0]),
 	})
-	payments := payment.NewHandler(payment.NewService(pool), log)
+	payments := payment.NewHandler(payment.NewService(pool, processor.NewMock()), log)
 	router := httpapi.NewRouter(log, health, cfg.AdminAPIKey, payments.Routes, nil)
 
 	srv := &http.Server{
