@@ -20,6 +20,7 @@ type Config struct {
 	// Async processing.
 	CommandsTopic      string
 	ConsumerGroup      string
+	DLQConsumerGroup   string
 	TopicPartitions    int
 	MaxAttempts        int
 	RetryBaseDelay     time.Duration
@@ -54,6 +55,7 @@ func Load() (Config, error) {
 	}
 	c.CommandsTopic = env("COMMANDS_TOPIC", "payments.commands")
 	c.ConsumerGroup = env("CONSUMER_GROUP", "settlement-worker")
+	c.DLQConsumerGroup = env("DLQ_CONSUMER_GROUP", "settlement-dlq-store")
 	if c.TopicPartitions, err = positiveInt("TOPIC_PARTITIONS", "3"); err != nil {
 		return c, err
 	}

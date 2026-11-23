@@ -12,6 +12,7 @@ import (
 	kg "github.com/segmentio/kafka-go"
 
 	"github.com/sayandip18/settlement-engine/internal/command"
+	"github.com/sayandip18/settlement-engine/internal/deadletter"
 	"github.com/sayandip18/settlement-engine/internal/outbox"
 	"github.com/sayandip18/settlement-engine/internal/payment"
 	kafkaplat "github.com/sayandip18/settlement-engine/internal/platform/kafka"
@@ -24,6 +25,7 @@ type pipeline struct {
 	*harness
 	brokers []string
 	topic   string
+	dlq     *deadletter.Service
 }
 
 func startPipeline(t *testing.T, policy command.RetryPolicy) *pipeline {
@@ -47,11 +49,14 @@ func startPipeline(t *testing.T, policy command.RetryPolicy) *pipeline {
 	pub := kafkaplat.NewPublisher(brokers)
 	relay := outbox.NewRelay(h.pool, pub, log, 100, 20*time.Millisecond)
 	consumer := kafkaplat.NewConsumer(brokers, "group-"+id, topic, log)
+	dlq := deadletter.NewService(h.pool, h.svc)
+	dlqConsumer := kafkaplat.NewConsumer(brokers, "dlq-"+id, command.DLQTopic(topic), log)
 
 	var wg sync.WaitGroup
 	for _, fn := range []func(){
 		func() { relay.Run(ctx) },
 		func() { consumer.Run(ctx, worker.Handle) },
+		func() { dlqConsumer.Run(ctx, dlq.Record) },
 	} {
 		wg.Add(1)
 		go func() { defer wg.Done(); fn() }()
@@ -60,9 +65,10 @@ func startPipeline(t *testing.T, policy command.RetryPolicy) *pipeline {
 		cancel()
 		wg.Wait()
 		consumer.Close()
+		dlqConsumer.Close()
 		pub.Close()
 	})
-	return &pipeline{harness: h, brokers: brokers, topic: topic}
+	return &pipeline{harness: h, brokers: brokers, topic: topic, dlq: dlq}
 }
 
 func (p *pipeline) waitTerminal(t *testing.T, ids ...uuid.UUID) {

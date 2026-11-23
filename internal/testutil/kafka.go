@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -21,6 +22,11 @@ var (
 func NewKafka(t *testing.T) []string {
 	t.Helper()
 	kafkaOnce.Do(func() {
+		defer func() {
+			if r := recover(); r != nil {
+				kafkaErr = fmt.Errorf("starting kafka container: %v", r)
+			}
+		}()
 		ctx := context.Background()
 		c, err := tckafka.Run(ctx, "confluentinc/confluent-local:7.5.0", tckafka.WithClusterID("test-cluster"))
 		if err != nil {

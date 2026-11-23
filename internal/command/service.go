@@ -264,3 +264,38 @@ func precheck(p payment.Payment, in SubmitInput) error {
 	}
 	return nil
 }
+
+// NotRequeueableError means the operation is not dead-lettered, so there is nothing to retry.
+type NotRequeueableError struct{ Status Status }
+
+func (e *NotRequeueableError) Error() string {
+	return "operation is " + string(e.Status) + ", not " + string(StatusDeadLettered)
+}
+
+// Requeue gives a dead-lettered operation a fresh start inside the caller's transaction:
+// it goes back to PENDING with its attempt counter reset, and a new first-attempt message
+// is queued. The old attempt-N message cannot be reused because the worker would skip it
+// as already handled. Used by dead-letter replay.
+func (s *Service) Requeue(ctx context.Context, tx pgx.Tx, opID uuid.UUID) error {
+	var paymentID uuid.UUID
+	err := tx.QueryRow(ctx,
+		`UPDATE operations
+		    SET status = 'PENDING', attempts = 0, error_code = NULL, error_message = NULL, updated_at = now()
+		  WHERE id = $1 AND status = 'DEAD_LETTERED'
+		  RETURNING payment_id`, opID).Scan(&paymentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var status Status
+		serr := tx.QueryRow(ctx, `SELECT status FROM operations WHERE id = $1`, opID).Scan(&status)
+		if errors.Is(serr, pgx.ErrNoRows) {
+			return ErrOperationNotFound
+		}
+		if serr != nil {
+			return fmt.Errorf("load operation: %w", serr)
+		}
+		return &NotRequeueableError{Status: status}
+	}
+	if err != nil {
+		return fmt.Errorf("reset operation: %w", err)
+	}
+	return s.enqueue(ctx, tx, opID, 1, paymentID.String())
+}

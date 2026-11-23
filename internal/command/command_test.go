@@ -125,7 +125,7 @@ func TestRetriesAreDelayedByBackoff(t *testing.T) {
 	op := h.submit(t, p.ID, command.KindAuthorize)
 	ctx := context.Background()
 
-	h.relay.Flush(ctx)
+	h.flush(t)
 	for _, m := range h.broker.undelivered() {
 		h.worker.Handle(ctx, toKafka(m, 1))
 	}
@@ -157,7 +157,7 @@ func TestRetriesExhaustedDeadLetter(t *testing.T) {
 		t.Fatalf("payment status %s: a dead-lettered operation must leave the payment untouched", s)
 	}
 
-	h.relay.Flush(context.Background())
+	h.flush(t)
 	dlq := h.broker.onTopic(command.DLQTopic(topic))
 	if len(dlq) != 1 {
 		t.Fatalf("%d DLQ messages, want 1", len(dlq))
@@ -176,7 +176,7 @@ func TestDuplicateDeliveryRunsOnce(t *testing.T) {
 	p := h.newPayment(t, "c1")
 	op := h.submit(t, p.ID, command.KindAuthorize)
 	ctx := context.Background()
-	h.relay.Flush(ctx)
+	h.flush(t)
 	m := toKafka(h.broker.undelivered()[0], 1)
 
 	for i := 0; i < 3; i++ { // at-least-once: the broker may redeliver
@@ -197,7 +197,7 @@ func TestConcurrentDuplicateDeliveriesScheduleOneRetry(t *testing.T) {
 	p := h.newPayment(t, "timeout_1")
 	h.submit(t, p.ID, command.KindAuthorize)
 	ctx := context.Background()
-	h.relay.Flush(ctx)
+	h.flush(t)
 	m := toKafka(h.broker.undelivered()[0], 1)
 
 	var wg sync.WaitGroup
@@ -236,7 +236,7 @@ func TestPoisonMessagesGoStraightToDLQ(t *testing.T) {
 			t.Errorf("%s: Handle returned %v; poison must be consumed, not retried", name, err)
 		}
 	}
-	h.relay.Flush(ctx)
+	h.flush(t)
 	dlq := h.broker.onTopic(command.DLQTopic(topic))
 	if len(dlq) != 5 {
 		t.Fatalf("%d DLQ messages, want 5", len(dlq))

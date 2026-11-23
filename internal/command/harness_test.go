@@ -99,6 +99,7 @@ type harness struct {
 	worker   *command.Worker
 	relay    *outbox.Relay
 	broker   *fakeBroker
+	offset   int // fake Kafka offset: like the real thing, it only ever grows
 }
 
 var fastPolicy = command.RetryPolicy{MaxAttempts: 3, Base: time.Millisecond, Max: 4 * time.Millisecond, Jitter: 0.2}
@@ -158,14 +159,13 @@ func (h *harness) pump(t *testing.T, ops ...command.Operation) {
 	t.Helper()
 	ctx := context.Background()
 	deadline := time.Now().Add(10 * time.Second)
-	offset := 0
 	for {
 		if _, err := h.relay.Flush(ctx); err != nil {
 			t.Fatal(err)
 		}
 		for _, m := range h.broker.undelivered() {
-			offset++
-			if err := h.worker.Handle(ctx, toKafka(m, offset)); err != nil {
+			h.offset++
+			if err := h.worker.Handle(ctx, toKafka(m, h.offset)); err != nil {
 				t.Fatalf("worker.Handle: %v", err)
 			}
 		}
@@ -182,6 +182,14 @@ func (h *harness) pump(t *testing.T, ops ...command.Operation) {
 			t.Fatal("timed out waiting for operations to finish")
 		}
 		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// flush publishes pending outbox rows to the fake broker, failing the test on error.
+func (h *harness) flush(t *testing.T) {
+	t.Helper()
+	if _, err := h.relay.Flush(context.Background()); err != nil {
+		t.Fatalf("relay flush: %v", err)
 	}
 }
 

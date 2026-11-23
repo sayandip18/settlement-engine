@@ -157,6 +157,7 @@ type Message struct {
 	Offset    int64
 	Key       string
 	Value     []byte
+	Headers   map[string]string
 }
 
 // Consumer reads one topic as part of a consumer group.
@@ -193,6 +194,12 @@ func (c *Consumer) Run(ctx context.Context, handle func(ctx context.Context, m M
 			return fmt.Errorf("fetch: %w", err)
 		}
 		m := Message{Topic: km.Topic, Partition: km.Partition, Offset: km.Offset, Key: string(km.Key), Value: km.Value}
+		if len(km.Headers) > 0 {
+			m.Headers = make(map[string]string, len(km.Headers))
+			for _, h := range km.Headers {
+				m.Headers[h.Key] = string(h.Value)
+			}
+		}
 		for {
 			err := handle(ctx, m)
 			if err == nil {

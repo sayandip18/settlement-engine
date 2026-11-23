@@ -3,6 +3,7 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"runtime"
 	"sync"
@@ -50,6 +51,13 @@ func Run(m *testing.M) int {
 func NewPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	once.Do(func() {
+		// testcontainers panics (rather than returning an error) when it cannot reach the
+		// Docker daemon; treat that like any other "Docker unavailable" failure.
+		defer func() {
+			if r := recover(); r != nil {
+				initErr = fmt.Errorf("starting postgres container: %v", r)
+			}
+		}()
 		ctx := context.Background()
 		c, err := tcpostgres.Run(ctx, "postgres:16-alpine",
 			tcpostgres.WithDatabase("settlement"),
@@ -78,7 +86,7 @@ func NewPool(t *testing.T) *pgxpool.Pool {
 		t.Skipf("postgres test container unavailable (is Docker running?): %v", initErr)
 	}
 	if _, err := pool.Exec(context.Background(),
-		`TRUNCATE outbox, operations, ledger_entries, ledger_transactions, ledger_accounts, refunds, idempotency_keys, payments, merchants CASCADE`); err != nil {
+		`TRUNCATE dead_letters, outbox, operations, ledger_entries, ledger_transactions, ledger_accounts, refunds, idempotency_keys, payments, merchants CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return pool

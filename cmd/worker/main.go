@@ -12,6 +12,7 @@ import (
 
 	"github.com/sayandip18/settlement-engine/internal/command"
 	"github.com/sayandip18/settlement-engine/internal/config"
+	"github.com/sayandip18/settlement-engine/internal/deadletter"
 	"github.com/sayandip18/settlement-engine/internal/outbox"
 	"github.com/sayandip18/settlement-engine/internal/payment"
 	"github.com/sayandip18/settlement-engine/internal/platform/db"
@@ -66,8 +67,12 @@ func run() error {
 	relay := outbox.NewRelay(pool, publisher, log, 100, cfg.OutboxPollInterval)
 	consumer := kafkaplat.NewConsumer(cfg.KafkaBrokers, cfg.ConsumerGroup, cfg.CommandsTopic, log)
 	defer consumer.Close()
+	// Copies dead-lettered messages into the dead_letters table for the admin endpoints.
+	dlq := deadletter.NewService(pool, command.NewService(pool, payments, cfg.CommandsTopic))
+	dlqConsumer := kafkaplat.NewConsumer(cfg.KafkaBrokers, cfg.DLQConsumerGroup, command.DLQTopic(cfg.CommandsTopic), log)
+	defer dlqConsumer.Close()
 
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	var wg sync.WaitGroup
 	run := func(name string, fn func(context.Context) error) {
 		wg.Add(1)
@@ -83,6 +88,7 @@ func run() error {
 	}
 	run("outbox-relay", relay.Run)
 	run("command-consumer", func(ctx context.Context) error { return consumer.Run(ctx, worker.Handle) })
+	run("dlq-store", func(ctx context.Context) error { return dlqConsumer.Run(ctx, dlq.Record) })
 
 	<-ctx.Done()
 	log.Info("shutting down")

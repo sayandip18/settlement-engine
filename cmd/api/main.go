@@ -14,6 +14,7 @@ import (
 
 	"github.com/sayandip18/settlement-engine/internal/command"
 	"github.com/sayandip18/settlement-engine/internal/config"
+	"github.com/sayandip18/settlement-engine/internal/deadletter"
 	"github.com/sayandip18/settlement-engine/internal/httpapi"
 	"github.com/sayandip18/settlement-engine/internal/ledger"
 	"github.com/sayandip18/settlement-engine/internal/merchant"
@@ -66,12 +67,14 @@ func run() error {
 	// creating and reading payments.
 	paymentSvc := payment.NewService(pool, processor.NewMock(), cfg.DefaultFeeBPS)
 	payments := payment.NewHandler(paymentSvc, log)
-	commands := command.NewHandler(command.NewService(pool, paymentSvc, cfg.CommandsTopic), log)
+	commandSvc := command.NewService(pool, paymentSvc, cfg.CommandsTopic)
+	commands := command.NewHandler(commandSvc, log)
+	deadLetters := deadletter.NewHandler(deadletter.NewService(pool, commandSvc), log)
 	payouts := ledger.NewHandler(pool, log)
 	merchants := merchant.NewHandler(pool, cfg.DefaultFeeBPS, log)
 	router := httpapi.NewRouter(log, health, cfg.AdminAPIKey,
 		func(r chi.Router) { payments.Routes(r); commands.Routes(r); payouts.Routes(r) },
-		merchants.Routes)
+		func(r chi.Router) { merchants.Routes(r); deadLetters.Routes(r) })
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
