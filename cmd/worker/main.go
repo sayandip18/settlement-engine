@@ -18,6 +18,7 @@ import (
 	"github.com/sayandip18/settlement-engine/internal/platform/db"
 	kafkaplat "github.com/sayandip18/settlement-engine/internal/platform/kafka"
 	"github.com/sayandip18/settlement-engine/internal/processor"
+	"github.com/sayandip18/settlement-engine/internal/reconcile"
 	"github.com/sayandip18/settlement-engine/migrations"
 )
 
@@ -72,7 +73,7 @@ func run() error {
 	dlqConsumer := kafkaplat.NewConsumer(cfg.KafkaBrokers, cfg.DLQConsumerGroup, command.DLQTopic(cfg.CommandsTopic), log)
 	defer dlqConsumer.Close()
 
-	errs := make(chan error, 3)
+	errs := make(chan error, 4)
 	var wg sync.WaitGroup
 	run := func(name string, fn func(context.Context) error) {
 		wg.Add(1)
@@ -88,6 +89,8 @@ func run() error {
 	}
 	run("outbox-relay", relay.Run)
 	run("command-consumer", func(ctx context.Context) error { return consumer.Run(ctx, worker.Handle) })
+	reconciler := reconcile.NewService(pool, cfg.ReconcileThresholds, log)
+	run("reconciler", func(ctx context.Context) error { return reconciler.RunLoop(ctx, cfg.ReconcileInterval) })
 	run("dlq-store", func(ctx context.Context) error { return dlqConsumer.Run(ctx, dlq.Record) })
 
 	<-ctx.Done()

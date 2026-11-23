@@ -40,6 +40,9 @@ type Kind string
 const (
 	KindCapture Kind = "CAPTURE"
 	KindRefund  Kind = "REFUND"
+	// KindAdjustment is an operator correction of a reconciliation finding; its RefID
+	// is the discrepancy ID, so each finding can be corrected at most once.
+	KindAdjustment Kind = "ADJUSTMENT"
 )
 
 const (
@@ -109,6 +112,11 @@ func Refund(paymentID uuid.UUID, merchantID, refundID string, amount, feeShare i
 		{AccountCustomerFunds, Credit, amount},
 	}
 	return Txn{paymentID, merchantID, KindRefund, refundID, nonZero(entries)}
+}
+
+// Adjustment builds a correcting transaction for the discrepancy with the given ID.
+func Adjustment(paymentID uuid.UUID, merchantID, discrepancyID string, entries []Entry) Txn {
+	return Txn{paymentID, merchantID, KindAdjustment, discrepancyID, entries}
 }
 
 func nonZero(entries []Entry) []Entry {

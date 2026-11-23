@@ -22,6 +22,7 @@ import (
 	"github.com/sayandip18/settlement-engine/internal/platform/db"
 	kafkaplat "github.com/sayandip18/settlement-engine/internal/platform/kafka"
 	"github.com/sayandip18/settlement-engine/internal/processor"
+	"github.com/sayandip18/settlement-engine/internal/reconcile"
 	"github.com/sayandip18/settlement-engine/migrations"
 )
 
@@ -70,11 +71,12 @@ func run() error {
 	commandSvc := command.NewService(pool, paymentSvc, cfg.CommandsTopic)
 	commands := command.NewHandler(commandSvc, log)
 	deadLetters := deadletter.NewHandler(deadletter.NewService(pool, commandSvc), log)
+	reconciliation := reconcile.NewHandler(reconcile.NewService(pool, cfg.ReconcileThresholds, log), log)
 	payouts := ledger.NewHandler(pool, log)
 	merchants := merchant.NewHandler(pool, cfg.DefaultFeeBPS, log)
 	router := httpapi.NewRouter(log, health, cfg.AdminAPIKey,
 		func(r chi.Router) { payments.Routes(r); commands.Routes(r); payouts.Routes(r) },
-		func(r chi.Router) { merchants.Routes(r); deadLetters.Routes(r) })
+		func(r chi.Router) { merchants.Routes(r); deadLetters.Routes(r); reconciliation.Routes(r) })
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

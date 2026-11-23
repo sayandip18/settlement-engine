@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sayandip18/settlement-engine/internal/reconcile"
 )
 
 type Config struct {
@@ -29,6 +31,9 @@ type Config struct {
 	// DefaultFeeBPS is the platform fee in basis points for merchants without their own (200 = 2%).
 	DefaultFeeBPS int
 	LogLevel      slog.Level
+	// Reconciliation.
+	ReconcileInterval   time.Duration
+	ReconcileThresholds reconcile.Thresholds
 }
 
 func Load() (Config, error) {
@@ -70,6 +75,11 @@ func Load() (Config, error) {
 		{&c.RetryBaseDelay, "RETRY_BASE_DELAY", "1s"},
 		{&c.RetryMaxDelay, "RETRY_MAX_DELAY", "1m"},
 		{&c.OutboxPollInterval, "OUTBOX_POLL_INTERVAL", "200ms"},
+		{&c.ReconcileInterval, "RECON_INTERVAL", "5m"},
+		{&c.ReconcileThresholds.PendingPayment, "RECON_PENDING_PAYMENT_AFTER", "1h"},
+		{&c.ReconcileThresholds.AuthorizedPayment, "RECON_AUTHORIZED_PAYMENT_AFTER", "168h"},
+		{&c.ReconcileThresholds.OutboxStale, "RECON_OUTBOX_STALE_AFTER", "5m"},
+		{&c.ReconcileThresholds.OperationStuck, "RECON_OPERATION_STUCK_AFTER", "15m"},
 	} {
 		v, perr := time.ParseDuration(env(d.name, d.def))
 		if perr != nil || v <= 0 {

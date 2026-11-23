@@ -20,8 +20,11 @@ type Querier interface {
 }
 
 // PayoutSummary totals one merchant's money movement in [From, To), read purely
-// from ledger entries. GrossCollected - Refunded - Fees == NetPayout always holds
-// because every ledger transaction balances.
+// from ledger entries. GrossCollected - Refunded - Fees == NetPayout holds whenever
+// the window contains only CAPTURE and REFUND transactions. An ADJUSTMENT (a
+// reconciliation correction) moves FeesPaise and NetPayoutPaise but not the gross and
+// refunded figures, so the identity can differ by the adjusted amount. A re-posted
+// capture is dated when it was posted, not when the money was originally collected.
 type PayoutSummary struct {
 	MerchantID          string    `json:"merchant_id"`
 	Currency            string    `json:"currency"`
