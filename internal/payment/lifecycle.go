@@ -84,10 +84,10 @@ func save(ctx context.Context, tx pgx.Tx, p *Payment) error {
 	err := tx.QueryRow(ctx,
 		`UPDATE payments
 		    SET status = $2, failure_reason = $3, refunded_paise = $4,
-		        captured_at = $5, fee_paise = $6, version = version + 1, updated_at = now()
-		  WHERE id = $1 AND version = $7
+		        captured_at = $5, fee_paise = $6, settled_at = $7, version = version + 1, updated_at = now()
+		  WHERE id = $1 AND version = $8
 		  RETURNING version, updated_at`,
-		p.ID, p.Status, p.FailureReason, p.RefundedPaise, p.CapturedAt, p.FeePaise, p.Version,
+		p.ID, p.Status, p.FailureReason, p.RefundedPaise, p.CapturedAt, p.FeePaise, p.SettledAt, p.Version,
 	).Scan(&p.Version, &p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("save payment: %w", err)

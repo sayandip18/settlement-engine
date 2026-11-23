@@ -12,7 +12,11 @@ import (
 	"time"
 
 	kg "github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/sayandip18/settlement-engine/internal/obs"
 	"github.com/sayandip18/settlement-engine/internal/outbox"
 )
 
@@ -200,22 +204,35 @@ func (c *Consumer) Run(ctx context.Context, handle func(ctx context.Context, m M
 				m.Headers[h.Key] = string(h.Value)
 			}
 		}
+		// The consume span continues the trace the publisher injected into the headers and
+		// covers every delivery attempt of this message.
+		hctx, span := obs.Tracer().Start(obs.Extract(ctx, m.Headers), "kafka consume "+m.Topic,
+			trace.WithSpanKind(trace.SpanKindConsumer),
+			trace.WithAttributes(attribute.String("messaging.destination.name", m.Topic),
+				attribute.Int("messaging.destination.partition.id", m.Partition),
+				attribute.Int64("messaging.kafka.offset", m.Offset)))
 		for {
-			err := handle(ctx, m)
+			err := handle(hctx, m)
 			if err == nil {
 				break
 			}
 			if ctx.Err() != nil {
+				span.End()
 				return nil
 			}
+			obs.KafkaHandlerErrors.WithLabelValues(m.Topic).Inc()
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "handler failed")
 			c.log.Error("handler failed, will retry message", "topic", m.Topic,
-				"partition", m.Partition, "offset", m.Offset, "err", err)
+				"partition", m.Partition, "offset", m.Offset, "err", err, "trace_id", obs.TraceID(hctx))
 			select {
 			case <-ctx.Done():
+				span.End()
 				return nil
 			case <-time.After(time.Second):
 			}
 		}
+		span.End()
 		if err := c.r.CommitMessages(ctx, km); err != nil {
 			if ctx.Err() != nil {
 				return nil

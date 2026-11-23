@@ -12,7 +12,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/sayandip18/settlement-engine/internal/obs"
 	"github.com/sayandip18/settlement-engine/internal/outbox"
 	"github.com/sayandip18/settlement-engine/internal/payment"
 	"github.com/sayandip18/settlement-engine/internal/platform/kafka"
@@ -64,9 +68,20 @@ func (w *Worker) Handle(ctx context.Context, m kafka.Message) error {
 		return nil
 	}
 
+	// Everything below, including the retry or DLQ message it may enqueue, belongs to
+	// this span, so a retried operation stays in one trace.
+	ctx, span := obs.Tracer().Start(ctx, "operation "+string(op.Kind), trace.WithAttributes(
+		attribute.String("operation.id", op.ID.String()), attribute.String("payment.id", op.PaymentID.String()),
+		attribute.Int("operation.attempt", msg.Attempt)))
+	defer span.End()
+
 	err = w.execute(ctx, op)
 	if ctx.Err() != nil {
 		return ctx.Err() // shutting down mid-call: leave it for redelivery
+	}
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 	}
 	if err == nil {
 		return w.finish(ctx, op, msg.Attempt, StatusSucceeded, nil)
@@ -167,7 +182,26 @@ func (w *Worker) fenced(ctx context.Context, op Operation, attempt int, status S
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	// Counted only when this delivery's update applied, so duplicate deliveries do not
+	// inflate the numbers.
+	kind := string(op.Kind)
+	switch status {
+	case StatusPending:
+		obs.OperationRetries.WithLabelValues(kind).Inc()
+	case StatusSucceeded, StatusFailed, StatusDeadLettered:
+		outcome := obs.OutcomeSucceeded
+		if status == StatusFailed {
+			outcome = obs.OutcomeFailed
+		} else if status == StatusDeadLettered {
+			outcome = obs.OutcomeDeadLettered
+		}
+		obs.OperationsFinished.WithLabelValues(kind, outcome).Inc()
+		obs.OperationLatency.WithLabelValues(kind, outcome).Observe(time.Since(op.CreatedAt).Seconds())
+	}
+	return nil
 }
 
 func (w *Worker) finish(ctx context.Context, op Operation, attempt int, status Status, f *Failure) error {

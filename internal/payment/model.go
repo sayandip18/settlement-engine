@@ -44,6 +44,7 @@ type Payment struct {
 	FeePaise      int64      `json:"fee_paise"`
 	RefundedPaise int64      `json:"refunded_paise"`
 	CapturedAt    *time.Time `json:"captured_at,omitempty"`
+	SettledAt     *time.Time `json:"settled_at,omitempty"`
 	Version       int        `json:"-"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`

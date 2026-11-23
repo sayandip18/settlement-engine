@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sayandip18/settlement-engine/internal/command"
+	"github.com/sayandip18/settlement-engine/internal/obs"
 	"github.com/sayandip18/settlement-engine/internal/outbox"
 	"github.com/sayandip18/settlement-engine/internal/platform/kafka"
 )
@@ -118,6 +119,7 @@ func (s *Service) Record(ctx context.Context, m kafka.Message) error {
 		uuid.New(), dedupe, srcTopic, srcPart, srcOffset, m.Key, m.Value, errText, attempts, opID); err != nil {
 		return fmt.Errorf("record dead letter: %w", err)
 	}
+	obs.DeadLettersRecorded.Inc()
 	return nil
 }
 
@@ -273,7 +275,7 @@ func (s *Service) Replay(ctx context.Context, id uuid.UUID) (Entry, error) {
 	}
 
 	if _, err := tx.Exec(ctx,
-		`UPDATE dead_letters SET status = 'REPLAYED', replay_count = replay_count + 1, replayed_at = now()
+		`UPDATE dead_letters SET status = 'REPLAYED', replay_count = replay_count + 1, replayed_at = now(), closed_at = now()
 		  WHERE id = $1`, id); err != nil {
 		return Entry{}, fmt.Errorf("mark replayed: %w", err)
 	}
@@ -294,7 +296,7 @@ func (s *Service) Dismiss(ctx context.Context, id uuid.UUID, note string) (Entry
 		n = &note
 	}
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE dead_letters SET status = 'DISMISSED', note = $2 WHERE id = $1 AND status = 'PENDING'`, id, n)
+		`UPDATE dead_letters SET status = 'DISMISSED', note = $2, closed_at = now() WHERE id = $1 AND status = 'PENDING'`, id, n)
 	if err != nil {
 		return Entry{}, fmt.Errorf("dismiss dead letter: %w", err)
 	}

@@ -198,6 +198,18 @@ func TestChecksDetect(t *testing.T) {
 				e.exec(t, `UPDATE payments SET refunded_paise = 30000, status = 'PARTIALLY_REFUNDED' WHERE id = $1`, id)
 				return id.String()
 			}, nil},
+		{"settled without settlement txn", reconcile.TypeSettlementMismatch,
+			func(t *testing.T, e env) string {
+				id := e.captured(t)
+				e.exec(t, `UPDATE payments SET status = 'SETTLED', settled_at = now() WHERE id = $1`, id)
+				return id.String()
+			}, nil},
+		{"settlement txn on unsettled payment", reconcile.TypeSettlementMismatch,
+			func(t *testing.T, e env) string {
+				id := e.captured(t)
+				e.post(t, ledger.Settlement(id, "m1", 98000))
+				return id.String()
+			}, nil},
 		{"payment stuck pending", reconcile.TypePaymentStuck,
 			func(t *testing.T, e env) string { return e.payment(t, "PENDING", 100, 0, 0, 2*time.Hour).String() },
 			func(t *testing.T, e env) {
@@ -560,5 +572,34 @@ func TestRunLeavesMoneyTablesUntouched(t *testing.T) {
 	e.run(t)
 	if after := digest(); after != before {
 		t.Fatal("reconciliation modified money tables")
+	}
+}
+
+func TestSettledPaymentsAreHealthy(t *testing.T) {
+	e := setup(t)
+	svc := payment.NewService(e.pool, processor.NewMock(), 200)
+	for i := 0; i < 3; i++ {
+		res, err := svc.Create(ctx, payment.CreateInput{MerchantID: "m1", CustomerID: "c1", AmountPaise: 100003, IdempotencyKey: uuid.NewString()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := res.Payment.ID
+		svc.Authorize(ctx, id) //nolint:errcheck
+		svc.Capture(ctx, id)   //nolint:errcheck
+		if i == 1 {            // partially refunded before payout
+			amt := int64(40001)
+			svc.Refund(ctx, payment.RefundInput{PaymentID: id, AmountPaise: &amt, IdempotencyKey: "r"}) //nolint:errcheck
+		}
+		e.exec(t, `UPDATE payments SET captured_at = now() - interval '2 days' WHERE id = $1`, id)
+		if ok, err := svc.Settle(ctx, id, 24*time.Hour); err != nil || !ok {
+			t.Fatalf("settle: ok=%v err=%v", ok, err)
+		}
+		if i == 2 { // refunded after payout
+			svc.Refund(ctx, payment.RefundInput{PaymentID: id, IdempotencyKey: "r"}) //nolint:errcheck
+		}
+	}
+	e.run(t)
+	if got := e.active(t); len(got) != 0 {
+		t.Fatalf("settled payments produced findings: %v", got)
 	}
 }

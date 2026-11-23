@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/sayandip18/settlement-engine/internal/obs"
 )
 
 // AdminAuth requires "Authorization: Bearer <key>" matching the admin key.
@@ -34,6 +36,7 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(ww, r)
 			log.Info("request",
 				"request_id", middleware.GetReqID(r.Context()),
+				"trace_id", obs.TraceID(r.Context()),
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", ww.Status(),

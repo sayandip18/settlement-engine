@@ -398,7 +398,7 @@ func TestHTTP(t *testing.T) {
 	}
 
 	code, res := a.do("POST", "/admin/reconciliation/run", nil, "secret")
-	if code != 200 || len(res["checks"].([]any)) != 9 {
+	if code != 200 || len(res["checks"].([]any)) != 10 {
 		t.Fatalf("run: %d %v", code, res)
 	}
 

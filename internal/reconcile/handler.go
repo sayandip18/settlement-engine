@@ -38,7 +38,7 @@ type listResponse struct {
 var allTypes = map[Type]bool{
 	TypeCaptureLedgerMissing: true, TypeCustomerFundsMismatch: true, TypeUnbalancedLedgerTxn: true,
 	TypePaymentStuck: true, TypeRefundExceedsCapture: true, TypeLedgerOnUncaptured: true,
-	TypeOutboxStale: true, TypeOperationStuck: true, TypeLedgerGlobalImbalance: true,
+	TypeOutboxStale: true, TypeOperationStuck: true, TypeLedgerGlobalImbalance: true, TypeSettlementMismatch: true,
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

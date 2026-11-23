@@ -43,6 +43,8 @@ const (
 	// KindAdjustment is an operator correction of a reconciliation finding; its RefID
 	// is the discrepancy ID, so each finding can be corrected at most once.
 	KindAdjustment Kind = "ADJUSTMENT"
+	// KindSettlement pays out what is owed to a merchant for one payment.
+	KindSettlement Kind = "SETTLEMENT"
 )
 
 const (
@@ -52,6 +54,9 @@ const (
 
 // MerchantPayable is the account for what is owed to one merchant.
 func MerchantPayable(merchantID string) string { return "MERCHANT_PAYABLE:" + merchantID }
+
+// MerchantPaidOut is the account recording what has been paid out to one merchant.
+func MerchantPaidOut(merchantID string) string { return "MERCHANT_PAID_OUT:" + merchantID }
 
 type Entry struct {
 	Account     string
@@ -112,6 +117,14 @@ func Refund(paymentID uuid.UUID, merchantID, refundID string, amount, feeShare i
 		{AccountCustomerFunds, Credit, amount},
 	}
 	return Txn{paymentID, merchantID, KindRefund, refundID, nonZero(entries)}
+}
+
+// Settlement moves amount from what is owed to the merchant to what has been paid out.
+func Settlement(paymentID uuid.UUID, merchantID string, amount int64) Txn {
+	return Txn{paymentID, merchantID, KindSettlement, paymentID.String(), []Entry{
+		{MerchantPayable(merchantID), Debit, amount},
+		{MerchantPaidOut(merchantID), Credit, amount},
+	}}
 }
 
 // Adjustment builds a correcting transaction for the discrepancy with the given ID.

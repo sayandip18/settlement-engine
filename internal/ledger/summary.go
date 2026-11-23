@@ -34,6 +34,9 @@ type PayoutSummary struct {
 	RefundedPaise       int64     `json:"refunded_paise"`
 	FeesPaise           int64     `json:"fees_paise"`
 	NetPayoutPaise      int64     `json:"net_payout_paise"`
+	// SettledPaise is what was paid out to the merchant in the window (SETTLEMENT
+	// transactions). It does not change NetPayoutPaise, which is what the merchant earned.
+	SettledPaise int64 `json:"settled_paise"`
 }
 
 func Summary(ctx context.Context, q Querier, merchantID string, from, to time.Time) (PayoutSummary, error) {
@@ -44,13 +47,14 @@ func Summary(ctx context.Context, q Querier, merchantID string, from, to time.Ti
 		  COALESCE(SUM(e.amount_paise) FILTER (WHERE t.kind = 'REFUND'  AND e.account_code = 'CUSTOMER_FUNDS' AND e.direction = 'CREDIT'), 0),
 		  COALESCE(SUM(e.amount_paise) FILTER (WHERE e.account_code = 'PLATFORM_FEES' AND e.direction = 'CREDIT'), 0)
 		- COALESCE(SUM(e.amount_paise) FILTER (WHERE e.account_code = 'PLATFORM_FEES' AND e.direction = 'DEBIT'), 0),
-		  COALESCE(SUM(e.amount_paise) FILTER (WHERE e.account_code = $2 AND e.direction = 'CREDIT'), 0)
-		- COALESCE(SUM(e.amount_paise) FILTER (WHERE e.account_code = $2 AND e.direction = 'DEBIT'), 0)
+		  COALESCE(SUM(e.amount_paise) FILTER (WHERE t.kind <> 'SETTLEMENT' AND e.account_code = $2 AND e.direction = 'CREDIT'), 0)
+		- COALESCE(SUM(e.amount_paise) FILTER (WHERE t.kind <> 'SETTLEMENT' AND e.account_code = $2 AND e.direction = 'DEBIT'), 0),
+		  COALESCE(SUM(e.amount_paise) FILTER (WHERE t.kind = 'SETTLEMENT' AND e.account_code = $2 AND e.direction = 'DEBIT'), 0)
 		FROM ledger_entries e
 		JOIN ledger_transactions t ON t.id = e.txn_id
 		WHERE t.merchant_id = $1 AND t.created_at >= $3 AND t.created_at < $4`,
 		merchantID, MerchantPayable(merchantID), from, to,
-	).Scan(&s.GrossCollectedPaise, &s.RefundedPaise, &s.FeesPaise, &s.NetPayoutPaise)
+	).Scan(&s.GrossCollectedPaise, &s.RefundedPaise, &s.FeesPaise, &s.NetPayoutPaise, &s.SettledPaise)
 	if err != nil {
 		return s, fmt.Errorf("payout summary: %w", err)
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/sayandip18/settlement-engine/internal/httpapi"
 	"github.com/sayandip18/settlement-engine/internal/ledger"
 	"github.com/sayandip18/settlement-engine/internal/merchant"
+	"github.com/sayandip18/settlement-engine/internal/obs"
 	"github.com/sayandip18/settlement-engine/internal/payment"
 	"github.com/sayandip18/settlement-engine/internal/platform/db"
 	kafkaplat "github.com/sayandip18/settlement-engine/internal/platform/kafka"
@@ -46,6 +47,16 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := obs.InitTracing(ctx, "settlement-api")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(sctx)
+	}()
 
 	if cfg.AutoMigrate {
 		if err := db.Migrate(cfg.DatabaseURL, migrations.FS); err != nil {
@@ -76,7 +87,8 @@ func run() error {
 	merchants := merchant.NewHandler(pool, cfg.DefaultFeeBPS, log)
 	router := httpapi.NewRouter(log, health, cfg.AdminAPIKey,
 		func(r chi.Router) { payments.Routes(r); commands.Routes(r); payouts.Routes(r) },
-		func(r chi.Router) { merchants.Routes(r); deadLetters.Routes(r); reconciliation.Routes(r) })
+		func(r chi.Router) { merchants.Routes(r); deadLetters.Routes(r); reconciliation.Routes(r) },
+		httpapi.WithMetrics(obs.Handler()))
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

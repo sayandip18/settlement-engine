@@ -37,6 +37,7 @@ func (s *Service) checks() []check {
 			return checkOperationStuck(ctx, tx, s.th)
 		}},
 		{TypeLedgerGlobalImbalance, checkLedgerGlobalImbalance},
+		{TypeSettlementMismatch, checkSettlementMismatch},
 	}
 }
 
@@ -299,5 +300,28 @@ func checkLedgerGlobalImbalance(ctx context.Context, tx pgx.Tx) ([]Finding, erro
 			}
 			return Finding{Subject: currency, Details: map[string]any{
 				"currency": currency, "debits_paise": debits, "credits_paise": credits, "difference_paise": debits - credits}}, nil
+		})
+}
+
+// settled_at, status SETTLED and the SETTLEMENT ledger transaction must agree.
+func checkSettlementMismatch(ctx context.Context, tx pgx.Tx) ([]Finding, error) {
+	return collect(ctx, tx, `
+		SELECT p.id, p.status, p.settled_at,
+		       EXISTS (SELECT 1 FROM ledger_transactions t WHERE t.payment_id = p.id AND t.kind = 'SETTLEMENT')
+		  FROM payments p
+		 WHERE (p.settled_at IS NOT NULL OR p.status = 'SETTLED')
+		       <> EXISTS (SELECT 1 FROM ledger_transactions t WHERE t.payment_id = p.id AND t.kind = 'SETTLEMENT')
+		 ORDER BY p.created_at, p.id LIMIT `+fmt.Sprint(fetchLimit), nil,
+		func(r pgx.Rows) (Finding, error) {
+			var (
+				id        uuid.UUID
+				status    string
+				settledAt *time.Time
+				hasLedger bool
+			)
+			if err := r.Scan(&id, &status, &settledAt, &hasLedger); err != nil {
+				return Finding{}, err
+			}
+			return paymentFinding(id, map[string]any{"status": status, "settled_at": settledAt, "has_settlement_txn": hasLedger}), nil
 		})
 }

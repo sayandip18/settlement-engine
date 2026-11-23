@@ -16,6 +16,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/sayandip18/settlement-engine/internal/obs"
 )
 
 // Message is one outgoing broker message.
@@ -37,11 +42,21 @@ type Publisher interface {
 
 // Enqueue adds a message using the caller's transaction.
 func Enqueue(ctx context.Context, tx pgx.Tx, m Message) error {
-	headers, err := json.Marshal(m.Headers)
+	// Carry the caller's trace through the outbox so the eventual publish and the
+	// consumer's work join the request that caused them.
+	var carried map[string]string
+	if len(m.Headers) > 0 {
+		carried = make(map[string]string, len(m.Headers)+1)
+		for k, v := range m.Headers {
+			carried[k] = v
+		}
+	}
+	carried = obs.Inject(ctx, carried)
+	headers, err := json.Marshal(carried)
 	if err != nil {
 		return fmt.Errorf("marshal outbox headers: %w", err)
 	}
-	if m.Headers == nil {
+	if carried == nil {
 		headers = []byte("{}")
 	}
 	if _, err := tx.Exec(ctx,
@@ -60,7 +75,11 @@ type Relay struct {
 	log       *slog.Logger
 	batchSize int
 	interval  time.Duration
+	beat      func()
 }
+
+// SetHeartbeat makes Run call beat on every loop iteration (for readiness checks).
+func (r *Relay) SetHeartbeat(beat func()) { r.beat = beat }
 
 func NewRelay(pool *pgxpool.Pool, pub Publisher, log *slog.Logger, batchSize int, interval time.Duration) *Relay {
 	if batchSize <= 0 {
@@ -120,9 +139,30 @@ func (r *Relay) Flush(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	if err := r.pub.Publish(ctx, msgs); err != nil {
-		return 0, fmt.Errorf("publish: %w", err)
+	// One producer span per message, continuing the trace stored in its headers; its
+	// context replaces the stored one so the consumer's span hangs off the publish.
+	spans := make([]trace.Span, len(msgs))
+	for i := range msgs {
+		sctx, sp := obs.Tracer().Start(obs.Extract(ctx, msgs[i].Headers), "outbox publish "+msgs[i].Topic,
+			trace.WithSpanKind(trace.SpanKindProducer),
+			trace.WithAttributes(attribute.String("messaging.destination.name", msgs[i].Topic),
+				attribute.String("messaging.kafka.message.key", msgs[i].Key), attribute.Int64("outbox.id", ids[i])))
+		msgs[i].Headers = obs.Inject(sctx, msgs[i].Headers)
+		spans[i] = sp
 	}
+	perr := r.pub.Publish(ctx, msgs)
+	for _, sp := range spans {
+		if perr != nil {
+			sp.RecordError(perr)
+			sp.SetStatus(codes.Error, "publish failed")
+		}
+		sp.End()
+	}
+	if perr != nil {
+		obs.OutboxPublishErrors.Inc()
+		return 0, fmt.Errorf("publish: %w", perr)
+	}
+	obs.OutboxPublished.Add(float64(len(msgs)))
 	if _, err := tx.Exec(ctx, `UPDATE outbox SET published_at = now() WHERE id = ANY($1)`, ids); err != nil {
 		return 0, fmt.Errorf("mark published: %w", err)
 	}
@@ -135,6 +175,9 @@ func (r *Relay) Flush(ctx context.Context) (int, error) {
 // Run flushes until ctx is cancelled, sleeping only when there is nothing to do.
 func (r *Relay) Run(ctx context.Context) error {
 	for {
+		if r.beat != nil {
+			r.beat()
+		}
 		n, err := r.Flush(ctx)
 		switch {
 		case ctx.Err() != nil:

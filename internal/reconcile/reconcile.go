@@ -18,6 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/sayandip18/settlement-engine/internal/obs"
 )
 
 type Type string
@@ -32,6 +34,7 @@ const (
 	TypeOutboxStale           Type = "OUTBOX_STALE"
 	TypeOperationStuck        Type = "OPERATION_STUCK"
 	TypeLedgerGlobalImbalance Type = "LEDGER_GLOBAL_IMBALANCE"
+	TypeSettlementMismatch    Type = "SETTLEMENT_MISMATCH"
 )
 
 type Status string
@@ -114,6 +117,17 @@ type Service struct {
 	pool *pgxpool.Pool
 	th   Thresholds
 	log  *slog.Logger
+	beat func()
+}
+
+// SetHeartbeat makes RunLoop call beat every iteration (for readiness checks).
+func (s *Service) SetHeartbeat(beat func()) { s.beat = beat }
+
+// AllTypes lists every finding type.
+func AllTypes() []Type {
+	return []Type{TypeCaptureLedgerMissing, TypeCustomerFundsMismatch, TypeUnbalancedLedgerTxn, TypePaymentStuck,
+		TypeRefundExceedsCapture, TypeLedgerOnUncaptured, TypeOutboxStale, TypeOperationStuck,
+		TypeLedgerGlobalImbalance, TypeSettlementMismatch}
 }
 
 func NewService(pool *pgxpool.Pool, th Thresholds, log *slog.Logger) *Service {
@@ -275,6 +289,15 @@ func (s *Service) persist(ctx context.Context, db execer, startedAt time.Time, o
 	if err := tx.Commit(ctx); err != nil {
 		return RunResult{}, fmt.Errorf("commit: %w", err)
 	}
+	for _, c := range res.Checks {
+		obs.ReconcileNewFindings.WithLabelValues(string(c.Type)).Add(float64(c.New))
+	}
+	if res.Failed() {
+		obs.ReconcileRuns.WithLabelValues("failed").Inc()
+	} else {
+		obs.ReconcileRuns.WithLabelValues("ok").Inc()
+		obs.ReconcileLastSuccess.SetToCurrentTime()
+	}
 	return res, nil
 }
 
@@ -283,13 +306,18 @@ func (s *Service) RunLoop(ctx context.Context, interval time.Duration) error {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
+		if s.beat != nil {
+			s.beat()
+		}
 		res, err := s.Run(ctx)
 		switch {
 		case ctx.Err() != nil:
 			return nil
 		case errors.Is(err, ErrAlreadyRunning):
+			obs.ReconcileRuns.WithLabelValues("skipped").Inc()
 			s.log.Debug("reconciliation skipped: another run is in progress")
 		case err != nil:
+			obs.ReconcileRuns.WithLabelValues("failed").Inc()
 			s.log.Error("reconciliation run failed", "err", err)
 		default:
 			var found, created, resolved int

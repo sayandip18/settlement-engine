@@ -31,6 +31,14 @@ type Config struct {
 	// DefaultFeeBPS is the platform fee in basis points for merchants without their own (200 = 2%).
 	DefaultFeeBPS int
 	LogLevel      slog.Level
+	// Settlement: payments are paid out SettlementDelay after capture, checked every SettlementInterval.
+	SettlementDelay    time.Duration
+	SettlementInterval time.Duration
+	// Retention and the worker's own HTTP endpoint (health + metrics).
+	OutboxRetention     time.Duration
+	DeadLetterRetention time.Duration
+	RetentionInterval   time.Duration
+	WorkerHTTPAddr      string
 	// Reconciliation.
 	ReconcileInterval   time.Duration
 	ReconcileThresholds reconcile.Thresholds
@@ -58,6 +66,7 @@ func Load() (Config, error) {
 	if err := c.LogLevel.UnmarshalText([]byte(env("LOG_LEVEL", "info"))); err != nil {
 		return c, errors.New("LOG_LEVEL must be debug, info, warn or error")
 	}
+	c.WorkerHTTPAddr = env("WORKER_HTTP_ADDR", ":8081")
 	c.CommandsTopic = env("COMMANDS_TOPIC", "payments.commands")
 	c.ConsumerGroup = env("CONSUMER_GROUP", "settlement-worker")
 	c.DLQConsumerGroup = env("DLQ_CONSUMER_GROUP", "settlement-dlq-store")
@@ -75,6 +84,11 @@ func Load() (Config, error) {
 		{&c.RetryBaseDelay, "RETRY_BASE_DELAY", "1s"},
 		{&c.RetryMaxDelay, "RETRY_MAX_DELAY", "1m"},
 		{&c.OutboxPollInterval, "OUTBOX_POLL_INTERVAL", "200ms"},
+		{&c.SettlementDelay, "SETTLEMENT_DELAY", "24h"},
+		{&c.SettlementInterval, "SETTLEMENT_INTERVAL", "1m"},
+		{&c.OutboxRetention, "RETENTION_OUTBOX", "168h"},
+		{&c.DeadLetterRetention, "RETENTION_DEAD_LETTERS", "720h"},
+		{&c.RetentionInterval, "RETENTION_INTERVAL", "1h"},
 		{&c.ReconcileInterval, "RECON_INTERVAL", "5m"},
 		{&c.ReconcileThresholds.PendingPayment, "RECON_PENDING_PAYMENT_AFTER", "1h"},
 		{&c.ReconcileThresholds.AuthorizedPayment, "RECON_AUTHORIZED_PAYMENT_AFTER", "168h"},
